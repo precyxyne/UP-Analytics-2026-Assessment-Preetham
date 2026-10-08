@@ -1,191 +1,460 @@
 # Smart Home Energy Usage Consumption Prediction
 
-## Overview
+## 1. Project Overview
 
-This project predicts two smart-home energy consumption targets:
+This project predicts two household energy consumption targets:
 
-- `Appliances`
-- `lights`
+* `Appliances`
+* `lights`
 
-The analysis combines indoor environmental measurements, outdoor weather conditions, and engineered temporal features. Because the data is time-dependent, all model evaluation uses chronological train/validation/test splits rather than random sampling.
+The objective is to build reliable regression models using indoor environmental measurements, outdoor weather conditions, and engineered time-based features.
 
-The project includes exploratory analysis, data-quality checks, feature engineering, model comparison, driver analysis, error diagnostics, exported predictions, and a FastAPI inference API.
+The project follows a chronological machine learning workflow designed to avoid data leakage and better reflect real-world forecasting conditions.
 
----
+## 2. Dataset
 
-## Dataset
+The dataset contains **19,735 observations** recorded at 10-minute intervals from:
 
-The dataset contains **19,735 observations** sampled at 10-minute intervals from:
+**2016-01-11 17:00:00 to 2016-05-27 18:00:00**
 
-**January 11, 2016 to May 27, 2016**
+Original variables include:
 
-The original dataset contains 29 columns, including:
+* Indoor temperature and humidity sensors (`T1`-`T9`, `RH_1`-`RH_9`)
+* Outdoor temperature and humidity
+* Atmospheric pressure
+* Wind speed
+* Visibility
+* Dew point
+* Energy consumption targets
+* `rv1` and `rv2`
 
-- Appliance and lighting energy consumption
-- Indoor temperature and humidity measurements
-- Outdoor temperature and humidity
-- Atmospheric pressure
-- Wind speed
-- Visibility
-- Dew point temperature
-- `rv1` and `rv2`
+## 3. Data Quality
 
-### Data quality
+The dataset was checked for:
 
-The following checks were performed:
+* Invalid timestamps
+* Missing values
+* Duplicate rows
+* Duplicate timestamps
+* Irregular time intervals
+* Negative target values
+* Extreme target observations
 
-- Missing values: **0**
-- Duplicate rows: **0**
-- Duplicate timestamps: **0**
-- Invalid timestamps: **0**
-- Irregular timestamp gaps: **0**
-- Sampling frequency: **10 minutes**
+Results:
 
-No observations were removed because of missing or malformed data.
+* No missing values
+* No duplicate rows
+* No duplicate timestamps
+* No timestamp gaps
+* Consistent 10-minute sampling interval
+* No negative target values
 
----
+The extreme consumption observations were retained because they represent genuine high-usage events rather than automatically treating them as data errors.
 
-## Feature Engineering
+`lights` is highly zero-inflated: approximately **77.3% of observations are zero**. Consequently, sMAPE is interpreted cautiously for this target.
 
-The final model schema contains **39 features**.
+## 4. Exploratory Analysis
 
-### Temporal features
+Key findings from the exploratory analysis:
 
-- Hour
-- Minute
-- Day of week
-- Day of month
-- Month
-- Week of year
-- Weekday/weekend indicators
-- Cyclical hour features
-- Cyclical day-of-week features
+* `Appliances` has a median consumption of 60 and a mean of approximately 97.7.
+* `Appliances` reaches substantially higher usage during high-demand periods, with the hourly average peaking around 18:00.
+* `lights` has a median of zero and is strongly concentrated around specific times of day.
+* Average lighting consumption peaks around 20:00.
+* Appliance consumption is more strongly associated with indoor environmental conditions and time of day.
+* Lighting consumption is predominantly schedule-driven.
+
+## 5. Feature Engineering
+
+The final feature set contains **39 features**.
+
+### Time features
+
+* Hour
+* Minute
+* Day of week
+* Day of month
+* Month
+* Week of year
+* Weekend/weekday indicators
+* Cyclical hour features
+* Cyclical day-of-week features
+
+Cyclical encoding was used so that adjacent times such as 23:00 and 00:00 remain close in feature space.
 
 ### Environmental features
 
-Indoor temperature and humidity measurements were combined with outdoor weather variables.
+* Indoor temperature sensors
+* Indoor humidity sensors
+* Outdoor temperature
+* Outdoor humidity
+* Atmospheric pressure
+* Wind speed
+* Visibility
+* Dew point
+* Mean indoor temperature
+* Mean indoor humidity
+* Indoor-outdoor temperature difference
 
-Additional aggregate features:
+The `date` column itself is not passed directly to the models.
 
-- Mean indoor temperature
-- Mean indoor humidity
-- Indoor-outdoor temperature difference
+## 6. Validation Strategy
 
-The variables `rv1` and `rv2` were evaluated separately and excluded from the final feature schema because they did not improve validation performance.
+Random train/test splitting was deliberately avoided because the observations are time ordered.
 
----
+The dataset was divided chronologically:
 
-## Validation Strategy
+| Split      | Percentage | Observations |
+| ---------- | ---------: | -----------: |
+| Train      |        70% |       13,814 |
+| Validation |        15% |        2,960 |
+| Test       |        15% |        2,961 |
 
-The data was split chronologically:
+The final test set represents the latest portion of the time series and was not used for model selection.
 
-| Split | Share | Period |
-|---|---:|---|
-| Train | 70% | Jan 11 – Apr 16 |
-| Validation | 15% | Apr 16 – May 7 |
-| Test | 15% | May 7 – May 27 |
+## 7. Evaluation Metrics
 
-No random shuffling was used.
+Models were evaluated using:
 
-The validation set was used for model and hyperparameter selection. The test set was kept untouched until final evaluation.
+* **MAE**: Mean Absolute Error
+* **RMSE**: Root Mean Squared Error
+* **sMAPE**: Symmetric Mean Absolute Percentage Error
 
----
+sMAPE is reported for completeness but interpreted carefully for `lights` because approximately 77.3% of its observations are zero.
 
-## Model Comparison
+## 8. Model Comparison
 
-Several approaches were evaluated, including a mean baseline, Ridge Regression, and XGBoost.
-
-### Appliances
-
-Ridge Regression with strong regularization performed best among the tested approaches.
-
-| Model | MAE | RMSE |
-|---|---:|---:|
-| Mean baseline | 53.97 | 92.39 |
-| XGBoost | 74.72 | 107.68 |
-| Ridge (α=1000) | **49.17** | **86.17** |
-
-### Lights
-
-A dedicated experiment compared temporal and environmental information.
-
-| Model | MAE | RMSE |
-|---|---:|---:|
-| Mean baseline | 5.31 | 5.99 |
-| Environment-only XGBoost | 5.82 | 7.22 |
-| Combined XGBoost | 5.15 | 6.73 |
-| Time-only XGBoost | **3.91** | **6.19** |
-
-The results indicate that lighting consumption is substantially more schedule/time-driven than environment-driven.
-
----
-
-## Final Models
-
-| Target | Model | Features |
-|---|---|---|
-| Appliances | Ridge Regression (α=1000) | Environmental + temporal |
-| lights | XGBoost | Temporal only |
-
-The selected models were refitted using the combined training and validation data before final test evaluation.
-
----
-
-## Final Test Performance
-
-| Target | MAE | RMSE | sMAPE |
-|---|---:|---:|---:|
-| Appliances | **47.91** | **83.71** | 41.99% |
-| lights | **3.22** | **5.92** | 146.95% |
-
-MAE and RMSE are emphasized for `lights` because approximately **77.3% of lighting observations are zero**, making percentage-based metrics such as sMAPE unstable.
-
----
-
-## Key Findings
+A mean prediction baseline was established before evaluating machine learning models.
 
 ### Appliances
 
-Appliance consumption is influenced by both temporal and environmental variables. The model captures typical consumption patterns but tends to underestimate extreme demand spikes.
+| Model         |       MAE |      RMSE |      sMAPE |
+| ------------- | --------: | --------: | ---------: |
+| Mean baseline |     53.97 |     92.39 |     50.68% |
+| Ridge, α=1000 | **49.17** | **86.17** | **43.58%** |
+| XGBoost       |     74.72 |    107.68 |     57.14% |
 
-The observed maximum Appliances consumption is **1080**, while the 95th percentile is **330**.
+Ridge regression with `alpha=1000` produced the strongest validation performance for `Appliances`.
 
 ### Lights
 
-Lighting consumption is highly zero-inflated and strongly schedule-driven.
+| Model                    |      MAE |     RMSE |   sMAPE |
+| ------------------------ | -------: | -------: | ------: |
+| Mean baseline            |     5.31 |     5.99 | 184.27% |
+| Time-only XGBoost        | **3.91** | **6.19** | 188.97% |
+| Environment-only XGBoost |     5.82 |     7.22 | 180.74% |
+| Combined XGBoost         |     5.15 |     6.73 | 182.91% |
 
-The strongest temporal drivers are:
+For `lights`, the time-only model achieved the lowest MAE, supporting the conclusion that lighting consumption is primarily schedule-driven.
 
-1. `hour`
-2. `day_of_week`
+## 9. `rv1` and `rv2` Validation
 
-The time-only model substantially outperformed the environment-only model.
+The variables `rv1` and `rv2` were evaluated rather than automatically included simply because they were present in the dataset.
 
-### `rv1` and `rv2`
+Their inclusion did not improve validation performance of the selected Ridge model. They were therefore excluded from the final feature schema.
 
-`rv1` and `rv2` were explicitly tested rather than automatically retained. Adding them did not improve validation performance, so they were excluded from the final model schema.
+This reduces unnecessary model inputs and avoids retaining variables without demonstrated predictive value.
 
----
+## 10. Key Driver Analysis
 
-## Business Recommendations
+Permutation importance was used to identify features that contributed most to validation performance.
 
-1. **Use separate modelling strategies for Appliances and lights.** Their predictive structures are materially different.
+For `Appliances`, important predictors included:
 
-2. **Prioritize peak-demand monitoring for Appliances.** Extreme consumption events are difficult for the current model to predict accurately and may require a separate peak-alerting mechanism.
+* `hour_cos`
+* `T3`
+* `RH_2`
+* `hour_sin`
+* `RH_1`
+* `RH_3`
+* `dow_sin`
+* `T8`
+* `RH_out`
+* `T2`
 
-3. **Use schedule-based optimization for lighting.** Hour and day-of-week patterns suggest that automated schedules and occupancy-aware controls could reduce unnecessary lighting consumption.
+The results indicate that both time-of-day patterns and indoor environmental conditions contribute materially to appliance consumption.
 
-4. **Collect occupancy and appliance-state data.** These variables could improve detection of abrupt consumption changes that cannot be explained by the current environmental and temporal features.
+For `lights`, `hour` was by far the most important predictor, followed by `day_of_week`. This provides additional evidence that lighting usage is primarily driven by household schedules rather than environmental conditions.
 
-5. **Consider probabilistic forecasting in future versions.** Prediction intervals or quantile forecasts could be useful for energy-management decisions involving peak demand.
+## 11. Final Models
 
----
+After validation and model selection:
 
-## API
+### Appliances
 
-The trained models are exposed through a FastAPI service.
+**Ridge Regression (`alpha=1000`)**
 
-### Start the API
+### Lights
+
+**XGBoost using time-based features**
+
+The models were then refitted using the combined training and validation data before being evaluated once on the held-out test set.
+
+## 12. Final Test Performance
+
+| Target     | Final Model        |       MAE |      RMSE |       sMAPE |
+| ---------- | ------------------ | --------: | --------: | ----------: |
+| Appliances | Ridge, α=1000      | **47.91** | **83.71** |  **41.99%** |
+| lights     | XGBoost, time-only |  **3.22** |  **5.92** | **146.95%** |
+
+The final models were selected using only chronological training/validation data. The test set was reserved for the final performance estimate.
+
+## 13. Error Diagnostics
+
+The `Appliances` model performs well on typical consumption levels but is conservative during extreme spikes.
+
+The largest appliance prediction errors occur during unusually high-consumption events where actual consumption substantially exceeds the model prediction.
+
+The `lights` model captures normal time-of-day patterns but can miss abrupt lighting events. This is expected because the model intentionally prioritizes schedule-related features and does not have direct information about individual light-switching events.
+
+Hourly error analysis also shows that appliance prediction errors become larger during high-demand daytime and evening periods.
+
+## 14. Business Insights and Recommendations
+
+### 1. Use time-aware forecasting
+
+Household energy consumption has strong temporal structure. Operational forecasting systems should therefore explicitly model time-of-day and day-of-week effects.
+
+### 2. Treat appliance and lighting consumption differently
+
+The results support separate modeling strategies:
+
+* Appliances: environmental + temporal variables
+* Lights: primarily temporal variables
+
+A single feature strategy is not necessarily optimal for both targets.
+
+### 3. Monitor extreme consumption events
+
+The appliance model performs substantially worse on extreme peaks. These events should be monitored separately because they may be operationally important despite being relatively infrequent.
+
+### 4. Use prediction intervals in production
+
+For an operational energy-management system, point predictions alone would be insufficient. Prediction intervals or probabilistic forecasting would help communicate uncertainty, particularly during unusual consumption spikes.
+
+### 5. Consider additional behavioral features
+
+Future versions could incorporate occupancy, appliance-specific states, holidays, room-level activity, and historical lag features to better capture sudden changes in household behavior.
+
+## 15. FastAPI
+
+The project includes a FastAPI inference service.
+
+Start the API from the project root:
 
 ```bash
 uvicorn api.main:app --reload
+```
+
+The API will be available at:
+
+```text
+http://127.0.0.1:8000
+```
+
+Interactive Swagger documentation:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+### Health Check
+
+**Endpoint**
+
+```text
+GET /health
+```
+
+Example response:
+
+```json
+{
+  "status": "healthy",
+  "models": [
+    "Appliances",
+    "lights"
+  ],
+  "feature_count": 39
+}
+```
+
+### Prediction
+
+**Endpoint**
+
+```text
+POST /predict
+```
+
+The request accepts the final feature schema used by the trained models.
+
+Example structure:
+
+```json
+{
+  "features": {
+    "T1": 21.5,
+    "T2": 20.5,
+    "T3": 21.0,
+    "T4": 20.8,
+    "T5": 20.5,
+    "T6": 7.5,
+    "T7": 20.2,
+    "T8": 20.0,
+    "T9": 19.5,
+    "RH_1": 40.0,
+    "RH_2": 40.0,
+    "RH_3": 40.0,
+    "RH_4": 40.0,
+    "RH_5": 50.0,
+    "RH_6": 30.0,
+    "RH_7": 40.0,
+    "RH_8": 40.0,
+    "RH_9": 40.0,
+    "T_out": 7.0,
+    "Press_mm_hg": 733.0,
+    "RH_out": 80.0,
+    "Windspeed": 2.0,
+    "Visibility": 60.0,
+    "Tdewpoint": 3.0,
+    "hour": 18,
+    "minute": 0,
+    "day_of_week": 2,
+    "day_of_month": 15,
+    "month": 5,
+    "week_of_year": 20,
+    "is_weekend": 0,
+    "is_weekday": 1,
+    "hour_sin": -1.0,
+    "hour_cos": -1.0,
+    "dow_sin": 0.43,
+    "dow_cos": -0.90,
+    "mean_indoor_temperature": 20.5,
+    "mean_indoor_humidity": 40.0,
+    "indoor_outdoor_temp_diff": 13.5
+  }
+}
+```
+
+Example response:
+
+```json
+{
+  "Appliances": 54.58591586682878,
+  "lights": 0.0
+}
+```
+
+The API loads the saved production models from the `models/` directory and automatically uses the appropriate feature subset for each target.
+
+API screenshots are included in the `screenshots/` directory.
+
+## 16. Project Structure
+
+```text
+UP-Analytics-2026-Assessment-Preetham/
+│
+├── api/
+│   └── main.py
+│
+├── data/
+│   └── raw/
+│       └── energydata_complete.csv
+│
+├── models/
+│   ├── appliances_model.joblib
+│   ├── feature_schema.joblib
+│   └── lights_model.joblib
+│
+├── notebooks/
+│   └── Smart_Home_Energy_Analysis.ipynb
+│
+├── outputs/
+│   ├── test_predictions.csv
+│   └── test_predictions.xlsx
+│
+├── screenshots/
+│   ├── api_health_1.png
+│   ├── api_health_2.png
+│   ├── api_predict_1.png
+│   ├── api_predict_2.png
+│   └── api_predict_3.png
+│
+├── .gitignore
+├── README.md
+└── requirements.txt
+```
+
+## 17. Running the Project
+
+Create and activate a virtual environment:
+
+```bash
+python -m venv .venv
+```
+
+Windows:
+
+```powershell
+.venv\Scripts\activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run the notebook:
+
+```text
+notebooks/Smart_Home_Energy_Analysis.ipynb
+```
+
+Run the API:
+
+```bash
+uvicorn api.main:app --reload
+```
+
+## 18. Outputs
+
+The repository contains:
+
+* Trained Appliances model
+* Trained lights model
+* Feature schema
+* Test-set predictions in CSV format
+* Test-set predictions in Excel format
+* API implementation
+* API screenshots
+* Complete analysis notebook
+
+## 19. AI and Tools Disclosure
+
+The project was developed using Python and standard data-science and machine-learning libraries.
+
+Key tools and packages include:
+
+* Python
+* pandas
+* NumPy
+* scikit-learn
+* XGBoost
+* Matplotlib
+* Seaborn
+* Joblib
+* FastAPI
+* Pydantic
+* Jupyter
+
+AI assistance was used during development for coding guidance, debugging, structuring the analysis, interpreting model results, and improving documentation. All data processing, model training, validation, evaluation, model selection, and API testing were executed and verified within the project environment.
+
+The final analytical decisions, feature selection, validation strategy, model comparison, interpretation of results, and reported metrics were reviewed against the executed notebook outputs.
+
+## 20. Conclusion
+
+The project demonstrates an end-to-end machine learning workflow for smart-home energy prediction, from data-quality assessment and exploratory analysis through feature engineering, chronological validation, model selection, error analysis, and API deployment.
+
+The results show that appliance consumption benefits from combining temporal and environmental information, while lighting consumption is substantially more schedule-driven. The final models provide a reproducible baseline for further development toward real-time household energy forecasting and management.
